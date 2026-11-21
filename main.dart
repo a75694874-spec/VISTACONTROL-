@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 
 import 'package:bluetooth_serial_next/bluetooth_serial_next.dart';
 import 'package:flutter/material.dart';
@@ -78,13 +79,24 @@ const _s = {
 // ───────── App state & Bluetooth link ─────────
 class Ctl {
   static final lang = ValueNotifier<String>('fa');
-  static final log = ValueNotifier<String>('>');
+  static final messenger = GlobalKey<ScaffoldMessengerState>();
   static final connected = ValueNotifier<bool>(false);
   static final acc = ValueNotifier<bool?>(null);
   static BluetoothSerialPort? port;
   static String deviceName = 'HC-05';
 
   static String t(String k) => _s[lang.value]![k] ?? k;
+
+  static void toast(String m) {
+    messenger.currentState
+      ?..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(
+        content: Text(m),
+        backgroundColor: const Color(0xFF14305F),
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 2),
+      ));
+  }
 
   static Future<void> setLang(String l) async {
     lang.value = l;
@@ -113,16 +125,15 @@ class Ctl {
   static Future<bool> send(String cmd) async {
     final p = port;
     if (p == null) {
-      log.value = '! ${t('notConn')}';
+      toast(t('notConn'));
       return false;
     }
     try {
       await p.writeText('$cmd\n');
-      log.value = '> $cmd';
       HapticFeedback.lightImpact();
       return true;
     } catch (e) {
-      log.value = '! $e';
+      toast('$e');
       return false;
     }
   }
@@ -147,6 +158,7 @@ class VistaApp extends StatelessWidget {
       valueListenable: Ctl.lang,
       builder: (_, l, __) => MaterialApp(
         debugShowCheckedModeBanner: false,
+        scaffoldMessengerKey: Ctl.messenger,
         title: 'Vista Control',
         theme: ThemeData(
           brightness: Brightness.dark,
@@ -410,8 +422,10 @@ class _SplashState extends State<SplashScreen> with TickerProviderStateMixin {
   @override
   void initState() {
     super.initState();
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
     main.forward().whenComplete(() {
       if (mounted) {
+        SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
         Navigator.of(context).pushReplacement(
             MaterialPageRoute(builder: (_) => const ConnectScreen()));
       }
@@ -420,6 +434,7 @@ class _SplashState extends State<SplashScreen> with TickerProviderStateMixin {
 
   @override
   void dispose() {
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     main.dispose();
     ring.dispose();
     super.dispose();
@@ -429,26 +444,42 @@ class _SplashState extends State<SplashScreen> with TickerProviderStateMixin {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFF02040C),
-      body: SafeArea(
-        child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-          AspectRatio(
-            aspectRatio: 1,
-            child: LayoutBuilder(builder: (_, bc) {
-              final w = bc.maxWidth;
-              return AnimatedBuilder(
-                animation: Listenable.merge([main, ring]),
-                builder: (_, __) {
-                  final a = Curves.easeOutCubic
-                      .transform((main.value / .85).clamp(0.0, 1.0));
-                  final prog = Curves.easeInOut
-                      .transform(((main.value - .14) / .7).clamp(0.0, 1.0));
-                  return Stack(children: [
+      body: AnimatedBuilder(
+        animation: Listenable.merge([main, ring]),
+        builder: (_, __) {
+          final a = Curves.easeOutCubic.transform((main.value / .85).clamp(0.0, 1.0));
+          final prog = Curves.easeInOut.transform(((main.value - .14) / .7).clamp(0.0, 1.0));
+          return Stack(fit: StackFit.expand, children: [
+            // the artwork, blurred and darkened, fills the whole screen
+            Opacity(
+              opacity: (main.value / .2).clamp(0.0, 1.0),
+              child: ImageFiltered(
+                imageFilter: ui.ImageFilter.blur(sigmaX: 26, sigmaY: 26),
+                child: Image.asset('assets/splash.jpg', fit: BoxFit.cover),
+              ),
+            ),
+            Container(color: const Color(0x8F000000)),
+            Center(
+              child: LayoutBuilder(builder: (_, bc) {
+                final w = bc.maxWidth;
+                return SizedBox(
+                  width: w,
+                  height: w,
+                  child: Stack(children: [
                     Opacity(
                       opacity: (main.value / .25).clamp(0.0, 1.0),
                       child: Transform.scale(
                         scale: 1.1 - .1 * a,
-                        child: Image.asset('assets/splash.jpg',
-                            width: w, height: w, fit: BoxFit.cover),
+                        child: ShaderMask(
+                          blendMode: BlendMode.dstIn,
+                          shaderCallback: (r) => const LinearGradient(
+                            begin: Alignment.topCenter,
+                            end: Alignment.bottomCenter,
+                            colors: [Colors.transparent, Colors.black, Colors.black, Colors.transparent],
+                            stops: [0, .1, .9, 1],
+                          ).createShader(r),
+                          child: Image.asset('assets/splash.jpg', width: w, height: w, fit: BoxFit.cover),
+                        ),
                       ),
                     ),
                     Positioned.fill(
@@ -468,8 +499,7 @@ class _SplashState extends State<SplashScreen> with TickerProviderStateMixin {
                           decoration: BoxDecoration(
                             color: const Color(0xFF050A1A),
                             borderRadius: BorderRadius.circular(99),
-                            border: Border.all(
-                                color: const Color(0xFF7A4BD6), width: 2),
+                            border: Border.all(color: const Color(0xFF7A4BD6), width: 2),
                           ),
                           clipBehavior: Clip.antiAlias,
                           alignment: Alignment.centerLeft,
@@ -478,25 +508,20 @@ class _SplashState extends State<SplashScreen> with TickerProviderStateMixin {
                             child: Container(
                               decoration: BoxDecoration(
                                 borderRadius: BorderRadius.circular(99),
-                                gradient: const LinearGradient(
-                                    colors: [Color(0xFF0A8FF0), cCy]),
-                                boxShadow: const [
-                                  BoxShadow(color: cCy, blurRadius: 12)
-                                ],
+                                gradient: const LinearGradient(colors: [Color(0xFF0A8FF0), cCy]),
+                                boxShadow: const [BoxShadow(color: cCy, blurRadius: 12)],
                               ),
                             ),
                           ),
                         ),
                       ),
                     ),
-                  ]);
-                },
-              );
-            }),
-          ),
-          const SizedBox(height: 16),
-          const LangSwitch(),
-        ]),
+                  ]),
+                );
+              }),
+            ),
+          ]);
+        },
       ),
     );
   }
@@ -590,7 +615,6 @@ class _ConnectState extends State<ConnectScreen>
           padding: const EdgeInsets.fromLTRB(16, 4, 16, 20),
           child: Column(children: [
             const TitleBar(),
-            const LangSwitch(),
             const SizedBox(height: 22),
             AnimatedBuilder(
               animation: pulse,
@@ -917,28 +941,6 @@ class _MainState extends State<MainScreen> {
                     style: const TextStyle(fontWeight: FontWeight.w700)),
               ]),
             ),
-            const SizedBox(height: 14),
-            ValueListenableBuilder<String>(
-              valueListenable: Ctl.log,
-              builder: (_, l, __) => Container(
-                width: double.infinity,
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF050B17),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: const Color(0xFF14305F)),
-                ),
-                child: Directionality(
-                  textDirection: TextDirection.ltr,
-                  child: Text(l,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                          fontFamily: 'monospace', fontSize: 12, color: cGr)),
-                ),
-              ),
-            ),
           ]),
         ),
       ),
@@ -1100,6 +1102,19 @@ class _SettingsState extends State<SettingsScreen> {
               ),
             ),
             const SizedBox(height: 10),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              decoration: hud(),
+              child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                const Row(children: [
+                  Icon(Icons.language, color: cCy, size: 22),
+                  SizedBox(width: 8),
+                  Text('زبان / Language', style: TextStyle(fontWeight: FontWeight.w700)),
+                ]),
+                const LangSwitch(),
+              ]),
+            ),
+            const SizedBox(height: 14),
             Align(
                 alignment: AlignmentDirectional.centerStart,
                 child:
